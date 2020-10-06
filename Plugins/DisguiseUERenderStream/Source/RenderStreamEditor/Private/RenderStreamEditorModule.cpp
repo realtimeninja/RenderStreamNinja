@@ -37,8 +37,11 @@ void FRenderStreamEditorModule::StartupModule()
 
     FWorldDelegates::LevelAddedToWorld.AddRaw(this, &FRenderStreamEditorModule::OnSchemasChanged);
     FWorldDelegates::LevelRemovedFromWorld.AddRaw(this, &FRenderStreamEditorModule::OnSchemasChanged);
+    FWorldDelegates::OnPostWorldInitialization.AddRaw(this, &FRenderStreamEditorModule::OnSchemasChanged);
     if (GEditor)
-        GEditor->OnBlueprintCompiled().AddRaw(this, &FRenderStreamEditorModule::OnSchemaChanged);
+    {
+        GEditor->OnBlueprintCompiled().AddRaw(this, &FRenderStreamEditorModule::OnSchemasChanged);
+    }
 }
 
 void FRenderStreamEditorModule::ShutdownModule()
@@ -103,112 +106,129 @@ TArray<FString> EnumOptions(const FNumericProperty* NumericProperty)
     return Options;
 }
 
-TSharedPtr<FJsonObject> FRenderStreamEditorModule::GenerateSchema(FString Scene, const AActor* Root)
+TSharedPtr<FJsonObject> FRenderStreamEditorModule::GenerateSchema(FString Scene, const AActor* Root, const AActor* PersistentRoot)
 {
     TSharedPtr<FJsonObject> JsonObject = MakeShareable(new FJsonObject);
-    TArray< TSharedPtr<FJsonValue> > JsonParameters;
 
-    if (Root)
-    {
-        UE_LOG(LogRenderStreamEditor, Log, TEXT("Generating schema for %s"), *Scene);
-        for (TFieldIterator<FProperty> PropIt(Root->GetClass(), EFieldIteratorFlags::ExcludeSuper); PropIt; ++PropIt)
-        {
-            const FProperty* Property = *PropIt;
-            const FString Name = Property->GetName();
-            const FString Category = Property->GetMetaData("Category");
-            if (!Property->HasAllPropertyFlags(CPF_Edit | CPF_BlueprintVisible) || Property->HasAllPropertyFlags(CPF_DisableEditOnInstance))
-            {
-                UE_LOG(LogRenderStreamEditor, Verbose, TEXT("Unexposed property: %s"), *Name);
-            }
-            else if (const FBoolProperty* BoolProperty = CastField<const FBoolProperty>(Property))
-            {
-                const bool v = BoolProperty->GetPropertyValue_InContainer(Root);
-                UE_LOG(LogRenderStreamEditor, Log, TEXT("Exposed bool property: %s is %d"), *Name, v);
-                JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "", Name, "", 0.f, 1.f, 1.f, v ? 1.f : 0.f, { "Off", "On" }))));
-            }
-            else if (const FByteProperty* ByteProperty = CastField<const FByteProperty>(Property))
-            {
-                const uint8 v = ByteProperty->GetPropertyValue_InContainer(Root);
-                TArray<FString> Options = EnumOptions(ByteProperty);
-                UE_LOG(LogRenderStreamEditor, Log, TEXT("Exposed int property: %s is %d [%s]"), *Name, v, *FString::Join(Options, TEXT(",")));
-                const bool HasLimits = Property->HasMetaData("ClampMin") && Property->HasMetaData("ClampMax");
-                const float Min = HasLimits ? FCString::Atof(*Property->GetMetaData("ClampMin")) : 0;
-                const float Max = HasLimits ? FCString::Atof(*Property->GetMetaData("ClampMax")) : 255;
-                JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "", Name, "", Min, Max, 1.f, float(v), Options))));
-            }
-            else if (const FIntProperty* IntProperty = CastField<const FIntProperty>(Property))
-            {
-                const int32 v = IntProperty->GetPropertyValue_InContainer(Root);
-                TArray<FString> Options = EnumOptions(IntProperty);
-                UE_LOG(LogRenderStreamEditor, Log, TEXT("Exposed int property: %s is %d [%s]"), *Name, v, *FString::Join(Options, TEXT(",")));
-                const bool HasLimits = Property->HasMetaData("ClampMin") && Property->HasMetaData("ClampMax");
-                const float Min = HasLimits ? FCString::Atof(*Property->GetMetaData("ClampMin")) : -1000;
-                const float Max = HasLimits ? FCString::Atof(*Property->GetMetaData("ClampMax")) : +1000;
-                JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "", Name, "", Min, Max, 1.f, float(v), Options))));
-            }
-            else if (const FFloatProperty* FloatProperty = CastField<const FFloatProperty>(Property))
-            {
-                const float v = FloatProperty->GetPropertyValue_InContainer(Root);
-                UE_LOG(LogRenderStreamEditor, Log, TEXT("Exposed float property: %s is %f"), *Name, v);
-                const bool HasLimits = Property->HasMetaData("ClampMin") && Property->HasMetaData("ClampMax");
-                const float Min = HasLimits ? FCString::Atof(*Property->GetMetaData("ClampMin")) : -1;
-                const float Max = HasLimits ? FCString::Atof(*Property->GetMetaData("ClampMax")) : +1;
-                JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "", Name, "", Min, Max, 0.001f, v))));
-            }
-            else if (const FStructProperty* StructProperty = CastField<const FStructProperty>(Property))
-            {
-                const void* StructAddress = StructProperty->ContainerPtrToValuePtr<void>(Root);
-                if (StructProperty->Struct == TBaseStructure<FVector>::Get())
-                {
-                    FVector v;
-                    StructProperty->CopyCompleteValue(&v, StructAddress);
-                    UE_LOG(LogRenderStreamEditor, Log, TEXT("Exposed vector property: %s is <%f, %f, %f>"), *Name, v.X, v.Y, v.Z);
-                    JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "x", Name, "x", -1.f, +1.f, 0.001f, v.X))));
-                    JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "y", Name, "y", -1.f, +1.f, 0.001f, v.Y))));
-                    JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "z", Name, "z", -1.f, +1.f, 0.001f, v.Z))));
-                }
-                else if (StructProperty->Struct == TBaseStructure<FColor>::Get())
-                {
-                    FColor v;
-                    StructProperty->CopyCompleteValue(&v, StructAddress);
-                    UE_LOG(LogRenderStreamEditor, Log, TEXT("Exposed colour property: %s is <%d, %d, %d, %d>"), *Name, v.R, v.G, v.B, v.A);
-                    JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "r", Name, "r", 0.f, 1.f, 0.0001f, v.R / 255.f))));
-                    JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "g", Name, "g", 0.f, 1.f, 0.0001f, v.G / 255.f))));
-                    JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "b", Name, "b", 0.f, 1.f, 0.0001f, v.B / 255.f))));
-                    JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "a", Name, "a", 0.f, 1.f, 0.0001f, v.A / 255.f))));
-                }
-                else if (StructProperty->Struct == TBaseStructure<FLinearColor>::Get())
-                {
-                    FLinearColor v;
-                    StructProperty->CopyCompleteValue(&v, StructAddress);
-                    UE_LOG(LogRenderStreamEditor, Log, TEXT("Exposed linear colour property: %s is <%f, %f, %f, %f>"), *Name, v.R, v.G, v.B, v.A);
-                    JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "r", Name, "r", 0.f, 1.f, 0.0001f, v.R))));
-                    JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "g", Name, "g", 0.f, 1.f, 0.0001f, v.G))));
-                    JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "b", Name, "b", 0.f, 1.f, 0.0001f, v.B))));
-                    JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "a", Name, "a", 0.f, 1.f, 0.0001f, v.A))));
-                }
-                else
-                {
-                    UE_LOG(LogRenderStreamEditor, Log, TEXT("Exposed struct property: %s"), *Name);
-                }
-            }
-            else
-            {
-                UE_LOG(LogRenderStreamEditor, Log, TEXT("Unsupported exposed property: %s"), *Name);
-            }
-        }
-        UE_LOG(LogRenderStreamEditor, Log, TEXT("Generated schema"));
-    }
+    TArray< TSharedPtr<FJsonValue> > JsonParameters = GenerateJSONParameters(PersistentRoot);
+    const int32 nPersistentParameters = JsonParameters.Num();
+
+    JsonParameters.Append(GenerateJSONParameters(Root));
+    const int32 nLevelParameters = JsonParameters.Num() - nPersistentParameters;
 
     JsonObject->SetStringField("name", Scene);
     JsonObject->SetArrayField("parameters", JsonParameters);
+    JsonObject->SetNumberField("nPersistentParameters", nPersistentParameters);
+    JsonObject->SetNumberField("nLevelParameters", nLevelParameters);
 
     return JsonObject;
 }
 
+TArray< TSharedPtr<FJsonValue> >FRenderStreamEditorModule::GenerateJSONParameters(const AActor* Root)
+{
+    TArray< TSharedPtr<FJsonValue> > JsonParameters;
+    if (!Root)
+        return JsonParameters;
+    for (TFieldIterator<FProperty> PropIt(Root->GetClass(), EFieldIteratorFlags::ExcludeSuper); PropIt; ++PropIt)
+    {
+        const FProperty* Property = *PropIt;
+        const FString Name = Property->GetName();
+        const FString Category = Property->GetMetaData("Category");
+        if (!Property->HasAllPropertyFlags(CPF_Edit | CPF_BlueprintVisible) || Property->HasAllPropertyFlags(CPF_DisableEditOnInstance))
+        {
+            UE_LOG(LogRenderStreamEditor, Verbose, TEXT("Unexposed property: %s"), *Name);
+        }
+        else if (const FBoolProperty* BoolProperty = CastField<const FBoolProperty>(Property))
+        {
+            const bool v = BoolProperty->GetPropertyValue_InContainer(Root);
+            UE_LOG(LogRenderStreamEditor, Log, TEXT("Exposed bool property: %s is %d"), *Name, v);
+            JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "", Name, "", 0.f, 1.f, 1.f, v ? 1.f : 0.f, { "Off", "On" }))));
+        }
+        else if (const FByteProperty* ByteProperty = CastField<const FByteProperty>(Property))
+        {
+            const uint8 v = ByteProperty->GetPropertyValue_InContainer(Root);
+            TArray<FString> Options = EnumOptions(ByteProperty);
+            UE_LOG(LogRenderStreamEditor, Log, TEXT("Exposed int property: %s is %d [%s]"), *Name, v, *FString::Join(Options, TEXT(",")));
+            const bool HasLimits = Property->HasMetaData("ClampMin") && Property->HasMetaData("ClampMax");
+            const float Min = HasLimits ? FCString::Atof(*Property->GetMetaData("ClampMin")) : 0;
+            const float Max = HasLimits ? FCString::Atof(*Property->GetMetaData("ClampMax")) : 255;
+            JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "", Name, "", Min, Max, 1.f, float(v), Options))));
+        }
+        else if (const FIntProperty* IntProperty = CastField<const FIntProperty>(Property))
+        {
+            const int32 v = IntProperty->GetPropertyValue_InContainer(Root);
+            TArray<FString> Options = EnumOptions(IntProperty);
+            UE_LOG(LogRenderStreamEditor, Log, TEXT("Exposed int property: %s is %d [%s]"), *Name, v, *FString::Join(Options, TEXT(",")));
+            const bool HasLimits = Property->HasMetaData("ClampMin") && Property->HasMetaData("ClampMax");
+            const float Min = HasLimits ? FCString::Atof(*Property->GetMetaData("ClampMin")) : -1000;
+            const float Max = HasLimits ? FCString::Atof(*Property->GetMetaData("ClampMax")) : +1000;
+            JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "", Name, "", Min, Max, 1.f, float(v), Options))));
+        }
+        else if (const FFloatProperty* FloatProperty = CastField<const FFloatProperty>(Property))
+        {
+            const float v = FloatProperty->GetPropertyValue_InContainer(Root);
+            UE_LOG(LogRenderStreamEditor, Log, TEXT("Exposed float property: %s is %f"), *Name, v);
+            const bool HasLimits = Property->HasMetaData("ClampMin") && Property->HasMetaData("ClampMax");
+            const float Min = HasLimits ? FCString::Atof(*Property->GetMetaData("ClampMin")) : -1;
+            const float Max = HasLimits ? FCString::Atof(*Property->GetMetaData("ClampMax")) : +1;
+            JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "", Name, "", Min, Max, 0.001f, v))));
+        }
+        else if (const FStructProperty* StructProperty = CastField<const FStructProperty>(Property))
+        {
+            const void* StructAddress = StructProperty->ContainerPtrToValuePtr<void>(Root);
+            if (StructProperty->Struct == TBaseStructure<FVector>::Get())
+            {
+                FVector v;
+                StructProperty->CopyCompleteValue(&v, StructAddress);
+                UE_LOG(LogRenderStreamEditor, Log, TEXT("Exposed vector property: %s is <%f, %f, %f>"), *Name, v.X, v.Y, v.Z);
+                JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "x", Name, "x", -1.f, +1.f, 0.001f, v.X))));
+                JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "y", Name, "y", -1.f, +1.f, 0.001f, v.Y))));
+                JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "z", Name, "z", -1.f, +1.f, 0.001f, v.Z))));
+            }
+            else if (StructProperty->Struct == TBaseStructure<FColor>::Get())
+            {
+                FColor v;
+                StructProperty->CopyCompleteValue(&v, StructAddress);
+                UE_LOG(LogRenderStreamEditor, Log, TEXT("Exposed colour property: %s is <%d, %d, %d, %d>"), *Name, v.R, v.G, v.B, v.A);
+                JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "r", Name, "r", 0.f, 1.f, 0.0001f, v.R / 255.f))));
+                JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "g", Name, "g", 0.f, 1.f, 0.0001f, v.G / 255.f))));
+                JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "b", Name, "b", 0.f, 1.f, 0.0001f, v.B / 255.f))));
+                JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "a", Name, "a", 0.f, 1.f, 0.0001f, v.A / 255.f))));
+            }
+            else if (StructProperty->Struct == TBaseStructure<FLinearColor>::Get())
+            {
+                FLinearColor v;
+                StructProperty->CopyCompleteValue(&v, StructAddress);
+                UE_LOG(LogRenderStreamEditor, Log, TEXT("Exposed linear colour property: %s is <%f, %f, %f, %f>"), *Name, v.R, v.G, v.B, v.A);
+                JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "r", Name, "r", 0.f, 1.f, 0.0001f, v.R))));
+                JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "g", Name, "g", 0.f, 1.f, 0.0001f, v.G))));
+                JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "b", Name, "b", 0.f, 1.f, 0.0001f, v.B))));
+                JsonParameters.Add(MakeShareable(new FJsonValueObject(createField(Category, Name, "a", Name, "a", 0.f, 1.f, 0.0001f, v.A))));
+            }
+            else
+            {
+                UE_LOG(LogRenderStreamEditor, Log, TEXT("Exposed struct property: %s"), *Name);
+            }
+        }
+        else
+        {
+            UE_LOG(LogRenderStreamEditor, Log, TEXT("Unsupported exposed property: %s"), *Name);
+        }
+    }
+    UE_LOG(LogRenderStreamEditor, Log, TEXT("Generated schema"));
+
+    return JsonParameters;
+}
+
+
 void FRenderStreamEditorModule::GenerateSchemas(const UWorld& World)
 {
     TArray< TSharedPtr<FJsonValue> > JsonSchemas;
+
+    const AActor* persistentActor = World.PersistentLevel->GetLevelScriptActor();
+
+    FString Scene = "Persistent Level";
+    JsonSchemas.Add(MakeShareable(new FJsonValueObject(GenerateSchema(Scene, nullptr, persistentActor))));
 
     const URenderStreamSettings* settings = GetDefault<URenderStreamSettings>();
     if (settings ? settings->bGenerateScenesFromLevels : URenderStreamSettings::bGenerateScenesFromLevelsDefault)
@@ -217,17 +237,11 @@ void FRenderStreamEditorModule::GenerateSchemas(const UWorld& World)
 
         for (ULevelStreaming* streamingLevel : streamingLevels)
         {
-            FString Scene = FPackageName::GetLongPackageAssetName(streamingLevel->GetWorldAssetPackageName());
+            Scene = FPackageName::GetLongPackageAssetName(streamingLevel->GetWorldAssetPackageName());
             if (streamingLevel->GetWorld())
                 Scene.RemoveFromStart(streamingLevel->GetWorld()->StreamingLevelsPrefix);
-            JsonSchemas.Add(MakeShareable(new FJsonValueObject(GenerateSchema(Scene, streamingLevel->GetLevelScriptActor()))));
+            JsonSchemas.Add(MakeShareable(new FJsonValueObject(GenerateSchema(Scene, streamingLevel->GetLevelScriptActor(), persistentActor))));
         }
-    }
-
-    if (JsonSchemas.Num() == 0)
-    {
-        FString Scene = "Default";
-        JsonSchemas.Add(MakeShareable(new FJsonValueObject(GenerateSchema(Scene, nullptr))));
     }
 
     FString Schema;
@@ -238,14 +252,29 @@ void FRenderStreamEditorModule::GenerateSchemas(const UWorld& World)
     FFileHelper::SaveStringToFile(Schema, *SchemaPath);
 }
 
-void FRenderStreamEditorModule::OnSchemaChanged()
+void FRenderStreamEditorModule::OnSchemasChanged()
 {
-    if (GEditor && GEditor->GetWorld())
-        GenerateSchemas(*GEditor->GetWorld());
+    if (GameWorld.IsValid())
+        GenerateSchemas(*GameWorld.Get());
 }
 
 void FRenderStreamEditorModule::OnSchemasChanged(ULevel*, UWorld* World)
 {  
+    GameWorld = TWeakObjectPtr<UWorld>(World);
+    if (World)
+        GenerateSchemas(*World);
+}
+
+void FRenderStreamEditorModule::OnSchemasChanged(UWorld* World)
+{
+    GameWorld = TWeakObjectPtr<UWorld>(World);
+    if (World)
+        GenerateSchemas(*World);
+}
+
+void FRenderStreamEditorModule::OnSchemasChanged(UWorld* World, const UWorld::InitializationValues /* IV */)
+{
+    GameWorld = TWeakObjectPtr<UWorld>(World);
     if (World)
         GenerateSchemas(*World);
 }

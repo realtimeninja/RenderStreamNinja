@@ -110,7 +110,7 @@ bool RenderStreamLink::loadExplicit()
     LOAD_FN(rs_setSchema);
 
     LOAD_FN(rs_createStream);
-    LOAD_FN(rs_createHQStream);
+    LOAD_FN(rs_createUCStream);
     LOAD_FN(rs_destroyStream);
 
     LOAD_FN(rs_sendFrame);

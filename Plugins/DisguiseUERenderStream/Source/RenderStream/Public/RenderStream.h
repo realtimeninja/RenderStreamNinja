@@ -15,6 +15,7 @@ DECLARE_LOG_CATEGORY_EXTERN(LogRenderStream, Log, All);
 
 class URenderStreamMediaCapture;
 class AActor;
+class StreamFNV;
 
 #define RSSTATUS_RED FSlateColor({ 1.0, 0.0, 0.0 })
 #define RSSTATUS_GREEN FSlateColor({ 0.0, 1.0, 0.0 })
@@ -61,13 +62,15 @@ private:
     {
         const ULevelStreaming* streamingLevel = nullptr;
         const AActor* schemaRoot = nullptr;
+        const AActor* schemaPersistentRoot = nullptr;
         uint64_t schemaHash = 0;
         size_t nParameters = 0;
     };
     std::vector<SchemaSpec> m_specs;
 
-    void ValidateSchema(const TSharedPtr<FJsonObject>& JsonSchema, const AActor* Root, SchemaSpec& spec); // throws
-    void ApplyParameters(AActor* schemaRoot, const std::vector<float>& parameters);
+    void ValidateSchema(const TSharedPtr<FJsonObject>& JsonSchema, const AActor* Root, const AActor* PersistentRoot, SchemaSpec& spec);
+    size_t ValidateRoot(const AActor* Root, const TArray< TSharedPtr<FJsonValue> >& JsonParameters, SchemaSpec& spec, StreamFNV& fnv) const;
+    size_t ApplyParameters(AActor* schemaRoot, const std::vector<float>& parameters, const size_t offset);
 
     FDelegateHandle OnBeginFrameHandle;
     void OnBeginFrame();

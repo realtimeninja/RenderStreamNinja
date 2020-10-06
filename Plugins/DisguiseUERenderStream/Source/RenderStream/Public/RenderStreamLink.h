@@ -22,12 +22,19 @@ public:
         FMT_NDI_UYVY_422_A, // NDI specific yuv422 format with alpha lines appended to bottom of frame
 
         // rivermax
-        FMT_HQ_YUV422_10BIT,
-        FMT_HQ_YUV422_12BIT,
-        FMT_HQ_RGB_10BIT,
-        FMT_HQ_RGB_12BIT,
-        FMT_HQ_RGBA_10BIT,
-        FMT_HQ_RGBA_12BIT,
+        FMT_UC_YUV422_10BIT,
+        FMT_UC_YUV422_12BIT,
+        FMT_UC_RGB_10BIT,
+        FMT_UC_RGB_12BIT,
+        FMT_UC_RGBA_10BIT,
+        FMT_UC_RGBA_12BIT,
+    };
+
+    enum SenderFrameType
+    {
+        RS_FRAMETYPE_HOST_MEMORY,
+        RS_FRAMETYPE_DX11_TEXTURE,
+        RS_FRAMETYPE_DX12_TEXTURE
     };
 
     enum RS_ERROR
@@ -99,7 +106,7 @@ public:
 #pragma pack(pop)
 
 #define RENDER_STREAM_VERSION_MAJOR 1
-#define RENDER_STREAM_VERSION_MINOR 6
+#define RENDER_STREAM_VERSION_MINOR 7
 
     static RenderStreamLink& instance();
 
@@ -126,9 +133,9 @@ private:
     typedef RS_ERROR rs_destroyAssetFn(AssetHandle* assetHandle);
     typedef RS_ERROR rs_setSchemaFn(AssetHandle assetHandle, const char* jsonSchema);
     typedef RS_ERROR rs_createStreamFn(AssetHandle assetHandle, const char* name, StreamHandle* handle);
-    typedef RS_ERROR rs_createHQStreamFn(AssetHandle assetHandle, const char* name, int width, int height, SenderPixelFormat senderFmt, int framerateNumerator, int framerateDenominator, void* pDeviceD3D11, bool opencl, StreamHandle* handle);
+    typedef RS_ERROR rs_createUCStreamFn(AssetHandle assetHandle, const char* name, int width, int height, SenderPixelFormat senderFmt, int framerateNumerator, int framerateDenominator, void* pDeviceD3D11, bool opencl, StreamHandle* handle);
     typedef RS_ERROR rs_destroyStreamFn(AssetHandle assetHandle, StreamHandle* handle);
-    typedef RS_ERROR rs_sendFrameFn(AssetHandle assetHandle, StreamHandle handle, void* data, int width, int height, SenderPixelFormat senderFmt, void* metaData);
+    typedef RS_ERROR rs_sendFrameFn(AssetHandle assetHandle, StreamHandle handle, SenderFrameType frameType, void* data, int width, int height, SenderPixelFormat senderFmt, void* metaData);
     typedef RS_ERROR rs_awaitFrameDataFn(/*Out*/AssetHandle * assetHandle, int timeoutMs, /*Out*/FrameData * data);
     typedef RS_ERROR rs_getFrameParametersFn(AssetHandle assetHandle, uint64_t schemaHash, /*Out*/void* outParameterData, size_t outParameterDataSize); 
     typedef RS_ERROR rs_getFrameCameraFn(AssetHandle assetHandle, StreamHandle streamHandle, /*Out*/CameraData* outCameraData);
@@ -156,7 +163,7 @@ public: // d3renderstream.h API, but loaded dynamically.
     rs_setSchemaFn* rs_setSchema = nullptr;
     rs_shutdownFn* rs_shutdown = nullptr;
     rs_createStreamFn* rs_createStream = nullptr;
-    rs_createHQStreamFn* rs_createHQStream = nullptr;
+    rs_createUCStreamFn* rs_createUCStream = nullptr;
     rs_destroyStreamFn* rs_destroyStream = nullptr;
     rs_sendFrameFn* rs_sendFrame = nullptr;
     rs_awaitFrameDataFn* rs_awaitFrameData = nullptr;

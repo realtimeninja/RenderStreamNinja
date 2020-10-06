@@ -2,6 +2,18 @@
 
 #pragma once
 
+
+// These macros are set in the DX12 and NVAftermath third party Unreal modules, which don't seem to be accessible to third-party plugins.
+#ifndef NV_AFTERMATH
+#define NV_AFTERMATH 0
+#endif
+
+#ifndef D3D12_PROFILING_ENABLED
+#define D3D12_PROFILING_ENABLED 0
+#endif
+
+#include "D3D12RHIPrivate.h"
+
 #include "CoreMinimal.h"
 #include "MediaIOCore/Public/MediaCapture.h"
 #include "Misc/Timecode.h"
@@ -9,6 +21,9 @@
 
 #include "RenderStream.h"
 #include "RenderStreamLink.h"
+
+#include "Windows/MinWindows.h"
+#include <d3d12.h>
 
 #include "RenderStreamMediaCapture.generated.h"
 
@@ -48,7 +63,7 @@ private:
 
     bool m_printSuccess = false;
 
-    bool m_useHQ = false;
+    bool m_useUC = false;
 
     FRenderStreamModule* m_module = nullptr;
 

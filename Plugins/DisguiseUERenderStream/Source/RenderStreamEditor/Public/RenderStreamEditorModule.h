@@ -17,9 +17,14 @@ public:
     virtual void ShutdownModule() override;
 
 private:
-    void OnSchemaChanged();
+    void OnSchemasChanged();
+    void OnSchemasChanged(UWorld* World);
     void OnSchemasChanged(ULevel* Level, UWorld* World);
-
+    void OnSchemasChanged(UWorld* World, const UWorld::InitializationValues IV);
     void GenerateSchemas(const UWorld& World);
-    TSharedPtr<FJsonObject> GenerateSchema(FString Scene, const AActor* Root);
+
+    TWeakObjectPtr<UWorld> GameWorld;
+
+    TSharedPtr<FJsonObject> GenerateSchema(FString Scene, const AActor* Root, const AActor* PersistentRoot);
+    TArray< TSharedPtr<FJsonValue> > GenerateJSONParameters(const AActor* Root);
 };

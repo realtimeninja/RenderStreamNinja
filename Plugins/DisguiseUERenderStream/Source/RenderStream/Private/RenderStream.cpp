@@ -18,8 +18,10 @@
 #include "Camera/CameraActor.h"
 #include "ShaderCore.h"
 
+#include "Interfaces/IPluginManager.h"
 #include "fnv.hpp"
 #include <map>
+
 
 DEFINE_LOG_CATEGORY(LogRenderStream);
 
@@ -64,7 +66,7 @@ void RenderStreamStatus::setInputStatus(const FString& text, const FSlateColor& 
 
 void FRenderStreamModule::StartupModule()
 {
-    FString ShaderDirectory = FPaths::Combine(FPaths::ProjectPluginsDir(), TEXT("DisguiseUERenderStream/Shaders"));
+    FString ShaderDirectory = FPaths::Combine(IPluginManager::Get().FindPlugin(TEXT("DisguiseUERenderStream"))->GetBaseDir(), TEXT("Shaders"));
     AddShaderSourceDirectoryMapping("/DisguiseUERenderStream", ShaderDirectory);
 
     // This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
@@ -159,172 +161,199 @@ void validateField(StreamFNV& fnv, FString key_, FString undecoratedSuffix, cons
     fnv.addData(reinterpret_cast<const unsigned char*>(stdKey.data()), stdKey.size());
 }
 
-void FRenderStreamModule::ValidateSchema(const TSharedPtr<FJsonObject>& JsonSchema, const AActor* Root, SchemaSpec& spec)
+void FRenderStreamModule::ValidateSchema(const TSharedPtr<FJsonObject>& JsonSchema, const AActor* Root, const AActor* PersistentRoot, SchemaSpec& spec)
 {
     StreamFNV fnv;
-    spec.nParameters = 0;
 
     const FString Scene = JsonSchema->GetStringField(TEXT("name"));
-    const TArray< TSharedPtr<FJsonValue> > JsonParameters = JsonSchema->GetArrayField(TEXT("parameters"));
+    TArray< TSharedPtr<FJsonValue> > JsonParameters = JsonSchema->GetArrayField(TEXT("parameters"));
+
+    const FString nPersistentParametersFieldName = TEXT("nPersistentParameters");
+    const FString nLevelParametersFieldName = TEXT("nLevelParameters");
+    if (!JsonSchema->HasField(nPersistentParametersFieldName) ||
+        !JsonSchema->HasField(nLevelParametersFieldName))
+    {
+        throw std::runtime_error("Missing supplementary fields in schema.json. Rebuild schema by opening project in Editor.");
+    }
+
+    const int nPersistentParameters = int(JsonSchema->GetNumberField(nPersistentParametersFieldName));
+    const int nLevelParameters = int(JsonSchema->GetNumberField(nLevelParametersFieldName));
+
+    UE_LOG(LogRenderStream, Log, TEXT("Validating schema for %s"), *Scene);
+
+    if (ValidateRoot(PersistentRoot, JsonParameters, spec, fnv) != nPersistentParameters)
+        throw std::runtime_error("Excess persistent parameters in schema");
 
     if (Root)
     {
-        UE_LOG(LogRenderStream, Log, TEXT("Validating schema for %s"), *Scene);
-        for (TFieldIterator<FProperty> PropIt(Root->GetClass(), EFieldIteratorFlags::ExcludeSuper); PropIt; ++PropIt)
-        {
-            const FProperty* Property = *PropIt;
-            const FString Name = Property->GetName();
-            if (!Property->HasAllPropertyFlags(CPF_Edit | CPF_BlueprintVisible) || Property->HasAllPropertyFlags(CPF_DisableEditOnInstance))
-            {
-                UE_LOG(LogRenderStream, Verbose, TEXT("Unexposed property: %s"), *Name);
-            }
-            else if (const FBoolProperty* BoolProperty = CastField<const FBoolProperty>(Property))
-            {
-                UE_LOG(LogRenderStream, Log, TEXT("Exposed bool property: %s"), *Name);
-                if (JsonParameters.Num() < spec.nParameters + 1)
-                    throw std::runtime_error("Property not exposed in schema");
-                validateField(fnv, Name, "", JsonParameters[spec.nParameters]);
-                ++spec.nParameters;
-            }
-            else if (const FByteProperty* ByteProperty = CastField<const FByteProperty>(Property))
-            {
-                UE_LOG(LogRenderStream, Log, TEXT("Exposed int property: %s"), *Name);
-                if (JsonParameters.Num() < spec.nParameters + 1)
-                    throw std::runtime_error("Property not exposed in schema");
-                validateField(fnv, Name, "", JsonParameters[spec.nParameters]);
-                ++spec.nParameters;
-            }
-            else if (const FIntProperty* IntProperty = CastField<const FIntProperty>(Property))
-            {
-                UE_LOG(LogRenderStream, Log, TEXT("Exposed int property: %s"), *Name);
-                if (JsonParameters.Num() < spec.nParameters + 1)
-                    throw std::runtime_error("Property not exposed in schema");
-                validateField(fnv, Name, "", JsonParameters[spec.nParameters]);
-                ++spec.nParameters;
-            }
-            else if (const FFloatProperty* FloatProperty = CastField<const FFloatProperty>(Property))
-            {
-                UE_LOG(LogRenderStream, Log, TEXT("Exposed float property: %s"), *Name);
-                if (JsonParameters.Num() < spec.nParameters + 1)
-                    throw std::runtime_error("Property not exposed in schema");
-                validateField(fnv, Name, "", JsonParameters[spec.nParameters]);
-                ++spec.nParameters;
-            }
-            else if (const FStructProperty* StructProperty = CastField<const FStructProperty>(Property))
-            {
-                const void* StructAddress = StructProperty->ContainerPtrToValuePtr<void>(Root);
-                if (StructProperty->Struct == TBaseStructure<FVector>::Get())
-                {
-                    UE_LOG(LogRenderStream, Log, TEXT("Exposed vector property: %s"), *Name);
-                    if (JsonParameters.Num() < spec.nParameters + 3)
-                        throw std::runtime_error("Properties not exposed in schema");
-                    validateField(fnv, Name, "x", JsonParameters[spec.nParameters + 0]);
-                    validateField(fnv, Name, "y", JsonParameters[spec.nParameters + 1]);
-                    validateField(fnv, Name, "z", JsonParameters[spec.nParameters + 2]);
-                    spec.nParameters += 3;
-                }
-                else if (StructProperty->Struct == TBaseStructure<FColor>::Get())
-                {
-                    UE_LOG(LogRenderStream, Log, TEXT("Exposed colour property: %s"), *Name);
-                    if (JsonParameters.Num() < spec.nParameters + 4)
-                        throw std::runtime_error("Properties not exposed in schema");
-                    validateField(fnv, Name, "r", JsonParameters[spec.nParameters + 0]);
-                    validateField(fnv, Name, "g", JsonParameters[spec.nParameters + 1]);
-                    validateField(fnv, Name, "b", JsonParameters[spec.nParameters + 2]);
-                    validateField(fnv, Name, "a", JsonParameters[spec.nParameters + 3]);
-                    spec.nParameters += 4;
-                }
-                else if (StructProperty->Struct == TBaseStructure<FLinearColor>::Get())
-                {
-                    UE_LOG(LogRenderStream, Log, TEXT("Exposed linear colour property: %s"), *Name);
-                    if (JsonParameters.Num() < spec.nParameters + 4)
-                        throw std::runtime_error("Properties not exposed in schema");
-                    validateField(fnv, Name, "r", JsonParameters[spec.nParameters + 0]);
-                    validateField(fnv, Name, "g", JsonParameters[spec.nParameters + 1]);
-                    validateField(fnv, Name, "b", JsonParameters[spec.nParameters + 2]);
-                    validateField(fnv, Name, "a", JsonParameters[spec.nParameters + 3]);
-                    spec.nParameters += 4;
-                }
-                else
-                {
-                    UE_LOG(LogRenderStream, Log, TEXT("Exposed struct property: %s"), *Name);
-                }
-            }
-            else
-            {
-                UE_LOG(LogRenderStream, Log, TEXT("Unsupported exposed property: %s"), *Name);
-            }
-        }
-        if (spec.nParameters != JsonParameters.Num())
-            throw std::runtime_error("Excess parameters in schema");
+        JsonParameters.RemoveAt(0, nPersistentParameters);
 
-        spec.schemaRoot = Root;
-        UE_LOG(LogRenderStream, Log, TEXT("Validated schema"));
+        if (ValidateRoot(Root, JsonParameters, spec, fnv) != nLevelParameters)
+            throw std::runtime_error("Excess level parameters in schema");
     }
+
+    spec.schemaRoot = Root;
+    spec.schemaPersistentRoot = PersistentRoot;
+    UE_LOG(LogRenderStream, Log, TEXT("Validated schema"));
 
     spec.schemaHash = fnv.getHash();
 }
 
-void FRenderStreamModule::ApplyParameters(AActor* Root, const std::vector<float>& parameters)
+size_t FRenderStreamModule::ValidateRoot(const AActor* Root, const TArray< TSharedPtr<FJsonValue> >& JsonParameters, SchemaSpec& spec, StreamFNV& fnv) const
 {
-    if (Root)
+    size_t nParameters = 0; 
+
+    for (TFieldIterator<FProperty> PropIt(Root->GetClass(), EFieldIteratorFlags::ExcludeSuper); PropIt; ++PropIt)
     {
-        size_t i = 0;
-        for (TFieldIterator<FProperty> PropIt(Root->GetClass(), EFieldIteratorFlags::ExcludeSuper); PropIt; ++PropIt)
+        const FProperty* Property = *PropIt;
+        const FString Name = Property->GetName();
+        if (!Property->HasAllPropertyFlags(CPF_Edit | CPF_BlueprintVisible) || Property->HasAllPropertyFlags(CPF_DisableEditOnInstance))
         {
-            FProperty* Property = *PropIt;
-            if (!Property->HasAllPropertyFlags(CPF_Edit | CPF_BlueprintVisible) || Property->HasAllPropertyFlags(CPF_DisableEditOnInstance))
+            UE_LOG(LogRenderStream, Verbose, TEXT("Unexposed property: %s"), *Name);
+        }
+        else if (const FBoolProperty* BoolProperty = CastField<const FBoolProperty>(Property))
+        {
+            UE_LOG(LogRenderStream, Log, TEXT("Exposed bool property: %s"), *Name);
+            if (JsonParameters.Num() < nParameters + 1)
+                throw std::runtime_error("Property not exposed in schema");
+            validateField(fnv, Name, "", JsonParameters[nParameters]);
+            ++nParameters;
+        }
+        else if (const FByteProperty* ByteProperty = CastField<const FByteProperty>(Property))
+        {
+            UE_LOG(LogRenderStream, Log, TEXT("Exposed int property: %s"), *Name);
+            if (JsonParameters.Num() < nParameters + 1)
+                throw std::runtime_error("Property not exposed in schema");
+            validateField(fnv, Name, "", JsonParameters[nParameters]);
+            ++nParameters;
+        }
+        else if (const FIntProperty* IntProperty = CastField<const FIntProperty>(Property))
+        {
+            UE_LOG(LogRenderStream, Log, TEXT("Exposed int property: %s"), *Name);
+            if (JsonParameters.Num() < nParameters + 1)
+                throw std::runtime_error("Property not exposed in schema");
+            validateField(fnv, Name, "", JsonParameters[nParameters]);
+            ++nParameters;
+        }
+        else if (const FFloatProperty* FloatProperty = CastField<const FFloatProperty>(Property))
+        {
+            UE_LOG(LogRenderStream, Log, TEXT("Exposed float property: %s"), *Name);
+            if (JsonParameters.Num() < nParameters + 1)
+                throw std::runtime_error("Property not exposed in schema");
+            validateField(fnv, Name, "", JsonParameters[nParameters]);
+            ++nParameters;
+        }
+        else if (const FStructProperty* StructProperty = CastField<const FStructProperty>(Property))
+        {
+            const void* StructAddress = StructProperty->ContainerPtrToValuePtr<void>(Root);
+            if (StructProperty->Struct == TBaseStructure<FVector>::Get())
             {
-                continue;
+                UE_LOG(LogRenderStream, Log, TEXT("Exposed vector property: %s"), *Name);
+                if (JsonParameters.Num() < nParameters + 3)
+                    throw std::runtime_error("Properties not exposed in schema");
+                validateField(fnv, Name, "x", JsonParameters[nParameters + 0]);
+                validateField(fnv, Name, "y", JsonParameters[nParameters + 1]);
+                validateField(fnv, Name, "z", JsonParameters[nParameters + 2]);
+                nParameters += 3;
             }
-            else if (const FBoolProperty* BoolProperty = CastField<const FBoolProperty>(Property))
+            else if (StructProperty->Struct == TBaseStructure<FColor>::Get())
             {
-                const bool v = bool(parameters.at(i));
-                BoolProperty->SetPropertyValue_InContainer(Root, v);
-                ++i;
+                UE_LOG(LogRenderStream, Log, TEXT("Exposed colour property: %s"), *Name);
+                if (JsonParameters.Num() < nParameters + 4)
+                    throw std::runtime_error("Properties not exposed in schema");
+                validateField(fnv, Name, "r", JsonParameters[nParameters + 0]);
+                validateField(fnv, Name, "g", JsonParameters[nParameters + 1]);
+                validateField(fnv, Name, "b", JsonParameters[nParameters + 2]);
+                validateField(fnv, Name, "a", JsonParameters[nParameters + 3]);
+                nParameters += 4;
             }
-            else if (FByteProperty* ByteProperty = CastField<FByteProperty>(Property))
+            else if (StructProperty->Struct == TBaseStructure<FLinearColor>::Get())
             {
-                const uint8 v = uint8(parameters.at(i));
-                ByteProperty->SetPropertyValue_InContainer(Root, v);
-                ++i;
+                UE_LOG(LogRenderStream, Log, TEXT("Exposed linear colour property: %s"), *Name);
+                if (JsonParameters.Num() < nParameters + 4)
+                    throw std::runtime_error("Properties not exposed in schema");
+                validateField(fnv, Name, "r", JsonParameters[nParameters + 0]);
+                validateField(fnv, Name, "g", JsonParameters[nParameters + 1]);
+                validateField(fnv, Name, "b", JsonParameters[nParameters + 2]);
+                validateField(fnv, Name, "a", JsonParameters[nParameters + 3]);
+                nParameters += 4;
             }
-            else if (FIntProperty* IntProperty = CastField<FIntProperty>(Property))
+            else
             {
-                const int32 v = int(parameters.at(i));
-                IntProperty->SetPropertyValue_InContainer(Root, v);
-                ++i;
+                UE_LOG(LogRenderStream, Log, TEXT("Exposed struct property: %s"), *Name);
             }
-            else if (FFloatProperty* FloatProperty = CastField<FFloatProperty>(Property))
+        }
+        else
+        {
+            UE_LOG(LogRenderStream, Log, TEXT("Unsupported exposed property: %s"), *Name);
+        }
+    }
+
+    spec.nParameters += nParameters;
+    return nParameters;
+}
+
+size_t FRenderStreamModule::ApplyParameters(AActor* Root, const std::vector<float>& parameters, const size_t offset)
+{
+    if (!Root)
+        return offset;
+
+    size_t i = offset;
+    for (TFieldIterator<FProperty> PropIt(Root->GetClass(), EFieldIteratorFlags::ExcludeSuper); PropIt; ++PropIt)
+    {
+        FProperty* Property = *PropIt;
+        if (!Property->HasAllPropertyFlags(CPF_Edit | CPF_BlueprintVisible) || Property->HasAllPropertyFlags(CPF_DisableEditOnInstance))
+        {
+            continue;
+        }
+        else if (const FBoolProperty* BoolProperty = CastField<const FBoolProperty>(Property))
+        {
+            const bool v = bool(parameters.at(i));
+            BoolProperty->SetPropertyValue_InContainer(Root, v);
+            ++i;
+        }
+        else if (FByteProperty* ByteProperty = CastField<FByteProperty>(Property))
+        {
+            const uint8 v = uint8(parameters.at(i));
+            ByteProperty->SetPropertyValue_InContainer(Root, v);
+            ++i;
+        }
+        else if (FIntProperty* IntProperty = CastField<FIntProperty>(Property))
+        {
+            const int32 v = int(parameters.at(i));
+            IntProperty->SetPropertyValue_InContainer(Root, v);
+            ++i;
+        }
+        else if (FFloatProperty* FloatProperty = CastField<FFloatProperty>(Property))
+        {
+            const float v = parameters.at(i);
+            FloatProperty->SetPropertyValue_InContainer(Root, v);
+            ++i;
+        }
+        else if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+        {
+            void* StructAddress = StructProperty->ContainerPtrToValuePtr<void>(Root);
+            if (StructProperty->Struct == TBaseStructure<FVector>::Get())
             {
-                const float v = parameters.at(i);
-                FloatProperty->SetPropertyValue_InContainer(Root, v);
-                ++i;
+                FVector v(parameters.at(i), parameters.at(i + 1), parameters.at(i + 2));
+                StructProperty->CopyCompleteValue(StructAddress, &v);
+                i += 3;
             }
-            else if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+            else if (StructProperty->Struct == TBaseStructure<FColor>::Get())
             {
-                void* StructAddress = StructProperty->ContainerPtrToValuePtr<void>(Root);
-                if (StructProperty->Struct == TBaseStructure<FVector>::Get())
-                {
-                    FVector v(parameters.at(i), parameters.at(i + 1), parameters.at(i + 2));
-                    StructProperty->CopyCompleteValue(StructAddress, &v);
-                    i += 3;
-                }
-                else if (StructProperty->Struct == TBaseStructure<FColor>::Get())
-                {
-                    FColor v(parameters.at(i) * 255, parameters.at(i + 1) * 255, parameters.at(i + 2) * 255, parameters.at(i + 3) * 255);
-                    StructProperty->CopyCompleteValue(StructAddress, &v);
-                    i += 4;
-                }
-                else if (StructProperty->Struct == TBaseStructure<FLinearColor>::Get())
-                {
-                    FLinearColor v(parameters.at(i), parameters.at(i + 1), parameters.at(i + 2), parameters.at(i + 3));
-                    StructProperty->CopyCompleteValue(StructAddress, &v);
-                    i += 4;
-                }
+                FColor v(parameters.at(i) * 255, parameters.at(i + 1) * 255, parameters.at(i + 2) * 255, parameters.at(i + 3) * 255);
+                StructProperty->CopyCompleteValue(StructAddress, &v);
+                i += 4;
+            }
+            else if (StructProperty->Struct == TBaseStructure<FLinearColor>::Get())
+            {
+                FLinearColor v(parameters.at(i), parameters.at(i + 1), parameters.at(i + 2), parameters.at(i + 3));
+                StructProperty->CopyCompleteValue(StructAddress, &v);
+                i += 4;
             }
         }
     }
+    return i;
 }
 
 void FRenderStreamModule::LoadSchemas(const UWorld& World)
@@ -358,7 +387,7 @@ void FRenderStreamModule::LoadSchemas(const UWorld& World)
             m_specs.resize(JsonSchemas.Num());
             for (size_t i = 0; i < m_specs.size(); ++i)
             {
-                if (!JsonSchemas[i])
+                if (!JsonSchemas[i]) 
                     throw std::runtime_error("Null schema");
                 const TSharedPtr<FJsonObject>& JsonSchema = JsonSchemas[i]->AsObject();
                 if (!JsonSchema)
@@ -366,8 +395,12 @@ void FRenderStreamModule::LoadSchemas(const UWorld& World)
                 const FString Scene = JsonSchema->GetStringField(TEXT("name"));
                 ULevelStreaming* streamingLevel = LevelLookup[Scene];
                 SchemaSpec& spec = m_specs[i];
-                spec.streamingLevel = LevelLookup[Scene];
-                ValidateSchema(JsonSchema, streamingLevel ? streamingLevel->GetLevelScriptActor() : nullptr, spec);
+                spec.streamingLevel = streamingLevel;
+
+                const AActor* persistentRoot = World.PersistentLevel->GetLevelScriptActor();
+                const AActor* levelRoot = streamingLevel ? streamingLevel->GetLevelScriptActor() : nullptr;
+                ValidateSchema(JsonSchema, levelRoot, persistentRoot, spec);
+
                 UE_LOG(LogRenderStream, Log, TEXT("Loaded schema for %s (%s): %d parameters"), *Scene, streamingLevel ? *streamingLevel->GetWorldAssetPackageName() : TEXT("null"), spec.nParameters);
             }
 #if WITH_EDITOR
@@ -390,7 +423,6 @@ void FRenderStreamModule::LoadSchemas(const UWorld& World)
         m_specs.resize(1);
         SchemaSpec& spec = m_specs.front();
         spec.streamingLevel = nullptr;
-        spec.nParameters = 0;
         StreamFNV fnv;
         spec.schemaHash = fnv.getHash();
     }
@@ -435,34 +467,54 @@ void FRenderStreamModule::OnBeginFrame()
     const UWorld* World = SchemaCallbackTarget ? SchemaCallbackTarget->SchemaWorld() : nullptr;
     if (World)
     {
-        for (ULevelStreaming* streamingLevel : World->GetStreamingLevels())
+        AActor* persistentRoot = World->PersistentLevel->GetLevelScriptActor();
+        if (spec.streamingLevel == nullptr && spec.schemaPersistentRoot == persistentRoot) // base level
         {
-            if (spec.streamingLevel == streamingLevel)
+            std::vector<float> parameters;
+            parameters.resize(spec.nParameters);
+            if (RenderStreamLink::instance().rs_getFrameParameters(m_assetHandle, spec.schemaHash, parameters.data(), parameters.size() * sizeof(float)) == RenderStreamLink::RS_ERROR_SUCCESS)
             {
-                if (!streamingLevel->IsLevelLoaded())
-                {
-                    UE_LOG(LogRenderStream, Log, TEXT("Loading level %s"), *streamingLevel->GetWorldAssetPackageFName().ToString());
-                    FLatentActionInfo LatentInfo;
-                    LatentInfo.CallbackTarget = SchemaCallbackTarget;
-                    LatentInfo.ExecutionFunction = "UpdateSchema";
-                    LatentInfo.UUID = int32(uintptr_t(this));
-                    LatentInfo.Linkage = 0;
-                    UGameplayStatics::LoadStreamLevel(World, streamingLevel->GetWorldAssetPackageFName(), true, true, LatentInfo);
-                }
-                else if (spec.schemaRoot == streamingLevel->GetLevelScriptActor())
-                {
-                    streamingLevel->SetShouldBeVisible(true);
-                    std::vector<float> parameters;
-                    parameters.resize(spec.nParameters);
-                    if (RenderStreamLink::instance().rs_getFrameParameters(m_assetHandle, spec.schemaHash, parameters.data(), parameters.size() * sizeof(float)) == RenderStreamLink::RS_ERROR_SUCCESS)
-                    {
-                        ApplyParameters(streamingLevel->GetLevelScriptActor(), parameters);
-                    }
-                }
+                ApplyParameters(persistentRoot, parameters, 0);
             }
-            else if (spec.streamingLevel != nullptr) // Leave visibility alone if scenes not generated from levels
+            for (ULevelStreaming* streamingLevel : World->GetStreamingLevels())
             {
                 streamingLevel->SetShouldBeVisible(false);
+            }
+        }
+        else
+        {
+            for (ULevelStreaming* streamingLevel : World->GetStreamingLevels())
+            {
+                if (spec.streamingLevel == streamingLevel)
+                {
+                    if (!streamingLevel->IsLevelLoaded())
+                    {
+                        UE_LOG(LogRenderStream, Log, TEXT("Loading level %s"), *streamingLevel->GetWorldAssetPackageFName().ToString());
+                        FLatentActionInfo LatentInfo;
+                        LatentInfo.CallbackTarget = SchemaCallbackTarget;
+                        LatentInfo.ExecutionFunction = "UpdateSchema";
+                        LatentInfo.UUID = int32(uintptr_t(this));
+                        LatentInfo.Linkage = 0;
+                        UGameplayStatics::LoadStreamLevel(World, streamingLevel->GetWorldAssetPackageFName(), true, true, LatentInfo);
+                    }
+                    else if (spec.schemaRoot == streamingLevel->GetLevelScriptActor())
+                    {
+                        AActor* levelRoot = streamingLevel->GetLevelScriptActor();
+                        streamingLevel->SetShouldBeVisible(true);
+                        std::vector<float> parameters;
+                        parameters.resize(spec.nParameters);
+                        if (!parameters.empty() && RenderStreamLink::instance().rs_getFrameParameters(m_assetHandle, spec.schemaHash, parameters.data(), parameters.size() * sizeof(float)) == RenderStreamLink::RS_ERROR_SUCCESS)
+                        {
+                            size_t offset = 0;
+                            offset = ApplyParameters(persistentRoot, parameters, offset);
+                            ApplyParameters(levelRoot, parameters, offset);
+                        }
+                    }
+                }
+                else if (spec.streamingLevel != nullptr)
+                {
+                    streamingLevel->SetShouldBeVisible(false); // hide all levels not associated with this schema
+                }
             }
         }
     }

@@ -1,6 +1,8 @@
 // Copyright 1998-2018 Epic Games, Inc. All Rights Reserved.
 
 using UnrealBuildTool;
+using System.IO;
+
 
 public class RenderStream : ModuleRules
 {
@@ -8,11 +10,13 @@ public class RenderStream : ModuleRules
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
-        PublicIncludePaths.AddRange (new string [] { "RenderStream/Private" });
-		//PublicAdditionalLibraries.AddRange(new string[] { "C:\\code\\d3_deps\\.conan\\data\\CUDA\\10.2\\d3\\stable\\package\\ca33edce272a279b24f87dc0d4cf5bbdcffbc187\\lib\\x64\\cudart.lib" });
-
+        PublicIncludePaths.AddRange (new string [] { "RenderStream/Private", 
+			Path.Combine(EngineDirectory, "Source/Runtime/D3D12RHI/Private"), 
+			Path.Combine(EngineDirectory, "Source/Runtime/D3D12RHI/Public"),
+			Path.Combine(EngineDirectory, "Source/ThirdParty/Windows/D3DX12/Include") }); 
+		
 		PublicDependencyModuleNames.AddRange (new string[] { "Core", "Sockets", "Networking", "MediaIOCore", "MediaUtils", "InputCore", "UMG" });
-		PrivateDependencyModuleNames.AddRange (new string[] { "CoreUObject", "Engine", "Slate", "SlateCore", "CinematicCamera", "RHI", "D3D11RHI", "RenderCore", "Projects", "Json", "JsonUtilities" });
+		PrivateDependencyModuleNames.AddRange (new string[] { "CoreUObject", "Engine", "Slate", "SlateCore", "CinematicCamera", "RHI", "D3D11RHI", "D3D12RHI", "RenderCore", "Projects", "Json", "JsonUtilities" });
 		
 		DynamicallyLoadedModuleNames.AddRange (new string[] {});
 	}
