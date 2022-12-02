@@ -1,5 +1,9 @@
 # RenderStreamNinja
- ===Description:
+
+PLEASE NOTE: THIS REPOSITORY IS DEPRECATED AND HERE FOR ARCHIVE PURPOSES ONLY. Disguise have since done an incredible job at improving their ST2110 compositing workflows so that hacks like these are no longer needed. Go to their website to get the latest information and plugin.
+
+
+===Description:
  
  UE4 template for use with the disguise RenderStream plugin, currently focused on the use of front and back plate components.
  
@@ -45,7 +49,4 @@
  - Having a widget rendered right in the middle of a camera's view means you are essentially cheating the rendering pipeline for that camera, and as such won't be able to use its GBuffer properly. At best this means you are limited to what a SceneCapture Component can give you. Scene Normals and Depth from the scene capture component can be written to a render target, but I think that's about it. At worst, it means you might get some issues with translucency and post processing effects.
  
  
- Always test extensively before deploying anything. I shouldn't need to say this, but then again, some people tried to drink bleach to cure the 'rona.
-
- 
- For any more issues or enquiries, contact Michael Adefehinti on michael@realtime.ninja
+ Always test extensively before deploying anything.
